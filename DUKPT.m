@@ -3,11 +3,12 @@
 //  POS
 //
 //  Created by Mikhail Burshteyn on 12/27/12.
+//  Modified by Paul Guelpa on Jan 19, 2017
 //  Copyright (c) 2012 Southern Company. All rights reserved.
 //
 
 #import "DUKPT.h"
-#import "CommonCryptor.h"
+#import <CommonCrypto/CommonCryptor.h>
 
 @implementation DUKPT
 
@@ -51,7 +52,7 @@ NSData* ksnData;
             }
         }
         
-        [self variantKeys];
+        [self dataVariantKeys];
     }
     
     return self;
@@ -60,14 +61,18 @@ NSData* ksnData;
 - (void)getIPEK
 {
     NSData* ksn = [self clearCounter];
-    NSData* firstBlock = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:ksn key:[self dataFromString:BDK]];
+    NSData* data = [ksn subdataWithRange:NSMakeRange(0,8)];
+
+    NSData* firstBlock = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:data key:[self dataFromString:BDK]];
     
     keyLeft = firstBlock;
     
     NSData* xorKey = [self xorData:[self dataFromString:BDK] withData:[self dataFromString:@"C0C0C0C000000000C0C0C0C000000000"]];
-    NSData* secondBlock = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:ksn key:xorKey];
+    NSData* secondBlock = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:data key:xorKey];
     
     keyRight = secondBlock;
+
+    NSLog(@"IPEK: %@%@", [keyLeft description], [keyRight description]);
 }
 
 - (NSData*)dataFromString:(NSString*)string
@@ -100,8 +105,8 @@ NSData* ksnData;
     
     const void *ptrKey = [alterKey bytes];
     
-    CCCryptorStatus ccStatus = CCCrypt(operation, algorithm, kCCOptionECBMode, (const void *)ptrKey, keySize, NULL, (const void *)plainText, plainTextBufferSize, (void *)bufferPtr, bufferPtrSize, &movedBytes);
-    
+    CCCryptorStatus ccStatus = CCCrypt(operation, algorithm, 0, (const void *)ptrKey, keySize, NULL, (const void *)plainText, plainTextBufferSize, (void *)bufferPtr, bufferPtrSize, &movedBytes);
+
     if (ccStatus == kCCParamError) NSLog(@"PARAM ERROR");
     else if (ccStatus == kCCBufferTooSmall) NSLog(@"BUFFER TOO SMALL");
     else if (ccStatus == kCCMemoryFailure) NSLog(@"MEMORY FAILURE");
@@ -223,31 +228,61 @@ NSData* ksnData;
     keyLeft = register1;
     keyRight = register2;
     
-    NSLog(@"%@ %@", register1, register2);
-    
-    
+    NSLog(@"keyGen %@ %@", [register1 description], [register2 description]);
 }
 
-- (void)variantKeys
+- (void)pinVariantKeys
 {
     NSData* dataXor = [self dataFromString:@"00000000000000FF"];
-    
+
     uint64_t intXor = 0;
     [dataXor getBytes:&intXor];
-    
+
     uint64_t intKey = 0;
     [keyLeft getBytes:&intKey];
-    
+
     uint64_t intResult = 0;
     intResult = intKey ^ intXor;
     keyLeft = [NSData dataWithBytes:&intResult length:8];
-    
+
     intKey = 0;
     [keyRight getBytes:&intKey];
-    
+
     intResult = 0;
     intResult = intKey ^ intXor;
     keyRight = [NSData dataWithBytes:&intResult length:8];
+
+    NSLog(@"Pin Variant Keys: %@%@", [keyLeft description], [keyRight description]);
+}
+
+- (void)dataVariantKeys
+{
+    NSData* dataXor = [self dataFromString:@"0000000000FF0000"];
+
+    uint64_t intXor = 0;
+    [dataXor getBytes:&intXor];
+
+    uint64_t intKey = 0;
+    [keyLeft getBytes:&intKey];
+
+    uint64_t intResult = 0;
+    intResult = intKey ^ intXor;
+    keyLeft = [NSData dataWithBytes:&intResult length:8];
+
+    intKey = 0;
+    [keyRight getBytes:&intKey];
+
+    intResult = 0;
+    intResult = intKey ^ intXor;
+    keyRight = [NSData dataWithBytes:&intResult length:8];
+
+    NSMutableData* key  = [NSMutableData dataWithData:keyLeft];
+    [key appendData:keyRight];
+
+    keyLeft = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:keyLeft key:key];
+    keyRight = [self DESOperation:kCCEncrypt algorithm:kCCAlgorithm3DES keySize:kCCKeySize3DES data:keyRight key:key];
+
+    NSLog(@"Data Variant Keys: %@%@", [keyLeft description], [keyRight description]);
 }
 
 - (NSString*)decrypt:(NSString*)data
